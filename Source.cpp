@@ -142,38 +142,98 @@ void KillstealLogic()
 		}
 	}
 }
+
+void MiscLogic()
+{
+	const auto Enemies = g_ObjectManager->GetChampions(false);
+	for (auto Enemy : Enemies)
+	{
+		if (Spells::Q->IsReady() && Enemy && Enemy->IsAIHero() && (g_Common->TickCount() - Spells::Q->LastCastTime() >= 500))
+		{
+			if (Enemy && Enemy->IsValidTarget(Spells::Q->Range()))
+			{
+				const auto pred = get_prediction(Spells::Q, Enemy);
+
+				if (Menu::Misc::Antigap->GetBool())
+					if (pred.Hitchance == HitChance::Dashing)
+						Spells::Q->Cast(pred.CastPosition);
+
+				if (Menu::Misc::AutoHardCC->GetBool())
+					if (pred.Hitchance == HitChance::Immobile)
+						Spells::Q->Cast(pred.CastPosition);
+
+				if (Enemy->HasBuff("vorpalspikesdebuff"))
+					Spells::Q->Cast(Enemy, HitChance::VeryHigh);
+			}
+		}
+
+		if (Spells::W->IsReady())
+		{
+			if (Enemy  && Enemy->IsAIHero() && Enemy->IsValidTarget(Spells::W->Range()))
+			{
+				if (Menu::Misc::Winterrupt->GetBool())
+					if (Enemy->IsCastingInterruptibleSpell())
+						Spells::W->Cast(Enemy->ServerPosition());
+			}
+		}
+	}
+
+	// Eat baron/dragon
+
+	if (Menu::Misc::JungleKS->GetBool())
+	{
+		const auto Enemies = g_ObjectManager->GetJungleMobs();
+		for (auto Enemy : Enemies)
+		{
+			if (Menu::Misc::JungleKS->GetBool() && Spells::R->IsReady() && Enemy->IsInRange(Spells::R->Range()) && Enemy->IsEpicMonster())
+			{
+				auto player_data = g_LocalPlayer->GetCharacterData();
+				auto base_health = g_LocalPlayer->GetCharacterData().HealthPerLevel * g_LocalPlayer->Level();
+				auto bonus_health = g_LocalPlayer->MaxHealth() - base_health;
+
+				auto damage = g_Common->CalculateDamageOnUnit(g_LocalPlayer, Enemy, DamageType::True, std::vector<double> {1000, 1000, 1000}[Spells::R->Level()
+					- 1] + (0.5 * g_LocalPlayer->FlatMagicDamageMod()) + (0.09 * bonus_health));
+
+				if (Enemy->IsValidTarget() && damage >= Enemy->Health())
+					Spells::R->Cast(Enemy);
+			}
+		}
+	}
+}
+
 // combo
 void ComboLogic()
 {
 	if (Menu::Combo::Enabled->GetBool())
 	{
+		if (Menu::Combo::UseR->GetBool() && Spells::R->IsReady())
+		{
+			auto Target = g_Common->GetTarget(Spells::R->Range(), DamageType::True);
+			if (Target && Target->IsValidTarget() && Target->IsAIHero())
+			{
+				if (CountEnemiesInRange(g_LocalPlayer->Position(), 330.f) >= 2 && g_LocalPlayer->HealthPercent() <= 15)
+					Spells::R->Cast(Target);
+			}
+		}
+
 		if (Menu::Combo::UseQ->GetBool() && Spells::Q->IsReady())
 		{
-			auto Target = g_Common->GetTarget(Spells::Q->Range(), DamageType::Magical);
-			if (Target && Target->IsValidTarget())
-			{
-				if (Target->Distance(g_LocalPlayer) <= 875.f)
+			auto Target = g_Common->GetTargetFromCoreTS(Spells::Q->Range(), DamageType::Magical);
+			if (Target && Target->IsValidTarget() && Target->IsAIHero() && Target->Distance(g_LocalPlayer) <= 875.f)
+				if (g_Common->TickCount() - Spells::Q->LastCastTime() >= 500)
+				{
 					Spells::Q->Cast(Target, HitChance::VeryHigh);
-			}
+				}
 		}
 
 		if (Menu::Combo::UseW->GetBool() && Spells::W->IsReady())
 		{
 			auto Target = g_Common->GetTarget(Spells::W->Range(), DamageType::Magical);
-			if (Target && Target->IsValidTarget())
+			if (Target && Target->IsValidTarget() && Target->IsAIHero())
+				if (g_Common->TickCount() - Spells::W->LastCastTime() >= 500)
 			{
 				if (Target->Distance(g_LocalPlayer) <= 570.f)
 					Spells::W->Cast(Target, HitChance::High);
-			}
-		}
-
-		if (Menu::Combo::UseR->GetBool() && Spells::R->IsReady())
-		{
-			auto Target = g_Common->GetTarget(Spells::R->Range(), DamageType::True);
-			if (Target && Target->IsValidTarget())
-			{
-				if (CountEnemiesInRange(g_LocalPlayer->Position(), 330.f) >= 2 && g_LocalPlayer->HealthPercent() <= 15)
-					Spells::R->Cast(Target);
 			}
 		}
 	}
@@ -207,6 +267,7 @@ void HarassLogic()
 		{
 			auto Target = g_Common->GetTarget(Spells::W->Range(), DamageType::Magical);
 			if (Target && Target->IsValidTarget())
+				if (g_Common->TickCount() - Spells::W->LastCastTime() >= 500)
 			{
 				if (Target->Distance(g_LocalPlayer) <= 550.f)
 					Spells::W->Cast(Target, HitChance::High);
@@ -216,8 +277,9 @@ void HarassLogic()
 		if (Menu::Harass::UseQ->GetBool() && Spells::Q->IsReady())
 		{
 			auto Target = g_Common->GetTarget(Spells::Q->Range(), DamageType::Magical);
-			if (Target && Target->IsValidTarget() && Target->HasBuffOfType(BuffType::Slow))
-			{
+			if (Target && Target->IsValidTarget() && Target->IsAIHero() && Target->HasBuffOfType(BuffType::Slow))
+				if (g_Common->TickCount() - Spells::Q->LastCastTime() >= 500)
+			{	
 				if (Target->Distance(g_LocalPlayer) <= 875.f)
 					Spells::Q->Cast(Target, HitChance::VeryHigh);
 			}
@@ -248,100 +310,6 @@ void OnAfterAttack(IGameObject* target)
 	}
 }
 
-// dont need this anymore
-////Auto hard cc
-//void OnBuffChange(IGameObject* object, OnBuffEventArgs* args)
-//{
-//	if (Menu::Misc::AutoHardCC->GetBool() && Spells::Q->IsReady())
-//		if (object->IsEnemy() && object->IsAIHero() && object->IsInRange(Spells::Q->Range()))
-//		{
-//			if (object->HasBuffOfType(BuffType::Charm) ||
-//				object->HasBuffOfType(BuffType::Fear) ||
-//				object->HasBuffOfType(BuffType::Slow) ||
-//				object->HasBuffOfType(BuffType::Knockup) ||
-//				object->HasBuffOfType(BuffType::Polymorph) ||
-//				object->HasBuffOfType(BuffType::Snare) ||
-//				object->HasBuffOfType(BuffType::Stun) ||
-//				object->HasBuffOfType(BuffType::Suppression) ||
-//				object->HasBuffOfType(BuffType::Taunt))
-//				Spells::Q->Cast(PredictedPostion(object));
-//		}
-//}
-
-void MiscLogic()
-{
-	const auto Enemies = g_ObjectManager->GetChampions(false);
-	for (auto Enemy : Enemies)
-	{
-		if (Spells::Q->IsReady())
-		{
-			if (Enemy && Enemy->IsValidTarget(Spells::Q->Range()))
-			{
-				const auto pred = get_prediction(Spells::Q, Enemy);
-
-				if (Menu::Misc::Antigap->GetBool())
-					if (pred.Hitchance == HitChance::Dashing)
-						Spells::Q->Cast(pred.CastPosition);
-
-				if (Menu::Misc::AutoHardCC->GetBool())
-					if (pred.Hitchance == HitChance::Immobile)
-						Spells::Q->Cast(pred.CastPosition);
-
-				if (Enemy->HasBuff("vorpalspikesdebuff"))
-					Spells::Q->Cast(pred.CastPosition);
-			}
-		}
-
-		if (Spells::W->IsReady())
-		{
-			if (Enemy && Enemy->IsValidTarget(Spells::W->Range()))
-			{
-				if (Menu::Misc::Winterrupt->GetBool())
-					if (Enemy->IsCastingInterruptibleSpell())
-						Spells::W->Cast(Enemy->ServerPosition());
-			}
-		}
-	}
-
-	//// W on Dash if Q on cd
-	//if (Menu::Misc::Antigap->GetBool() && Spells::W->IsReady() && !Spells::Q->IsReady())
-	//{
-	//	const auto Enemies = g_ObjectManager->GetChampions(false);
-	//	for (auto Enemy : Enemies)
-	//	{
-	//		if (Enemy->IsDashing())
-	//		{
-	//			const auto DashData = Enemy->GetDashData();
-	//			if (g_LocalPlayer->Distance(DashData.EndPosition) < 530.f)
-	//				Spells::W->Cast(Enemy, HitChance::High);
-	//		}
-	//	}
-	//}
-	// W on channels
-
-	// Eat baron/dragon
-
-	if (Menu::Misc::JungleKS->GetBool())
-	{
-		const auto Enemies = g_ObjectManager->GetJungleMobs();
-		for (auto Enemy : Enemies)
-		{
-			if (Menu::Misc::JungleKS->GetBool() && Spells::R->IsReady() && Enemy->IsInRange(Spells::R->Range()) && Enemy->IsEpicMonster())
-			{
-				auto player_data = g_LocalPlayer->GetCharacterData();
-				auto base_health = g_LocalPlayer->GetCharacterData().HealthPerLevel * g_LocalPlayer->Level();
-				auto bonus_health = g_LocalPlayer->MaxHealth() - base_health;
-
-				auto damage = g_Common->CalculateDamageOnUnit(g_LocalPlayer, Enemy, DamageType::True, std::vector<double> {1000, 1000, 1000}[Spells::R->Level()
-					- 1] + (0.5 * g_LocalPlayer->FlatMagicDamageMod()) + (0.09 * bonus_health));
-
-				if (Enemy->IsValidTarget() && damage >= Enemy->Health())
-					Spells::R->Cast(Enemy);
-			}
-		}
-	}
-}
-
 // Lane Clear Logic
 void LaneCLearLogic()
 {
@@ -354,15 +322,18 @@ void LaneCLearLogic()
 
 	auto Target = g_Orbwalker->GetTarget();
 	{
-		if (Target && (Target->IsMinion() || Target->IsMonster()) && Spells::Q->Radius() && Spells::Q->IsReady() && g_Orbwalker->IsModeActive(eOrbwalkingMode::kModeLaneClear))
+		{
+			if (Target && Target->IsMinion() && Spells::Q->Radius() && Spells::Q->IsReady() && g_Orbwalker->IsModeActive(eOrbwalkingMode::kModeLaneClear))
 
-		if (Menu::LaneClear::UseQ->GetBool()) 
-			Spells::Q->CastOnBestFarmPosition(MinMinions);
+				if (Menu::LaneClear::UseQ->GetBool())
+					Spells::Q->CastOnBestFarmPosition(MinMinions);
+		}
+		{
+			if (Target && Target->IsMinion() && Spells::W->Range() && Spells::W->IsReady() && g_Orbwalker->IsModeActive(eOrbwalkingMode::kModeLaneClear))
 
-		if (Target && (Target->IsMinion() || Target->IsMonster()) && Spells::W->Range() && Spells::W->IsReady() && g_Orbwalker->IsModeActive(eOrbwalkingMode::kModeLaneClear))
-
-		if (Menu::LaneClear::UseW->GetBool()) 
-			Spells::W->CastOnBestFarmPosition(MinMinions);
+				if (Menu::LaneClear::UseW->GetBool())
+					Spells::W->CastOnBestFarmPosition(MinMinions);
+		}
 	}
 
 	// Jungle Clear Logic
@@ -496,9 +467,9 @@ PLUGIN_API bool OnLoadSDK(IPluginsSDK* plugin_sdk)
 	Spells::E = g_Common->AddSpell(SpellSlot::E, 50.f);
 	Spells::R = g_Common->AddSpell(SpellSlot::R, 330.f);
 
-	// pred hitchance is very good with these weird values
-	Spells::Q->SetSkillshot(1.2f, 200.f, FLT_MAX, kCollidesWithNothing, kSkillshotCircle);
-	Spells::W->SetSkillshot(0.5f, 80.f, FLT_MAX, kCollidesWithNothing, kSkillshotLine);
+	// pred hitchance
+	Spells::Q->SetSkillshot(1.2f, 230.f, 20.f, kCollidesWithNothing, kSkillshotCircle);
+	Spells::W->SetSkillshot(0.641f, 210.f, 4000, kCollidesWithNothing, kSkillshotCone);
 
 	EventHandler<Events::GameUpdate>::AddEventHandler(OnGameUpdate);
 	EventHandler<Events::OnAfterAttackOrbwalker>::AddEventHandler(OnAfterAttack);
@@ -521,3 +492,6 @@ PLUGIN_API void OnUnloadSDK()
 	//	EventHandler<Events::OnBuff>::RemoveEventHandler(OnBuffChange);
 	g_Common->ChatPrint("<font color='#00BFFF'>Cho'Gath Unloaded.</font>");
 }
+
+//changelog
+//changed line 500/501 prediction, 501 changed to cone
